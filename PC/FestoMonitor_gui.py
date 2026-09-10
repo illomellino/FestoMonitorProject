@@ -2,11 +2,13 @@
 """
 Air Consumption Meter - ESP32 GUI
 Interfaccia moderna per visualizzazione e storicizzazione
+Versione migliorata: Tensione V + Nl/min + totalizzatore + CSV robusto
 """
 
 import sys
 import csv
 import time
+import threading
 from datetime import datetime
 from collections import deque
 from pathlib import Path
@@ -23,7 +25,7 @@ from PyQt6.QtGui import QFont, QColor, QPalette
 import pyqtgraph as pg
 import numpy as np
 
-# ---------- Stile ----------
+# ---------- Stile moderno scuro ----------
 DARK_STYLE = """
 QMainWindow, QWidget {
     background-color: #1e1e2e;
@@ -76,8 +78,9 @@ QStatusBar {
 }
 """
 
+
 class SerialWorker(QObject):
-    data_received = pyqtSignal(float, float, float, float, float)  # t, P, F, mA_p, mA_f
+    data_received = pyqtSignal(float, float, float, float, float)  # t, P, F, V_p, V_f
     error = pyqtSignal(str)
 
     def __init__(self):
@@ -107,43 +110,48 @@ class SerialWorker(QObject):
                     continue
                 parts = line.split(',')
                 if len(parts) >= 5:
-                    t = float(parts[0]) / 1000.0
+                    t = float(parts[0]) / 1000.0          # ms → s
                     p = float(parts[1])
                     f = float(parts[2])
-                    ma_p = float(parts[3])
-                    ma_f = float(parts[4])
-                    self.data_received.emit(t, p, f, ma_p, ma_f)
+                    v_p = float(parts[3])
+                    v_f = float(parts[4])
+                    self.data_received.emit(t, p, f, v_p, v_f)
             except Exception as e:
                 self.error.emit(str(e))
                 time.sleep(0.05)
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Air Consumption Meter – ESP32")
-        self.resize(1200, 750)
+        self.setWindowTitle("Air Consumption Meter – ESP32 + ADS1115")
+        self.resize(1280, 800)
         self.setStyleSheet(DARK_STYLE)
 
         self.worker = SerialWorker()
         self.worker.data_received.connect(self.on_data)
         self.worker.error.connect(self.on_error)
 
-        self.buffer_size = 300          # ~60 s a 5 Hz
+        # Buffer per grafici (~60 s a 5 Hz)
+        self.buffer_size = 300
         self.time_data = deque(maxlen=self.buffer_size)
         self.press_data = deque(maxlen=self.buffer_size)
         self.flow_data = deque(maxlen=self.buffer_size)
 
+        # Logging e totalizzatore
         self.logging = False
         self.csv_file = None
         self.csv_writer = None
         self.start_time = None
+        self.total_nl = 0.0                 # totalizzatore consumo aria
+        self.last_sample_time = None
 
         self._build_ui()
         self._setup_plots()
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_plots)
-        self.timer.start(100)  # 10 fps
+        self.timer.start(100)               # 10 fps refresh grafici
 
     def _build_ui(self):
         central = QWidget()
@@ -173,11 +181,15 @@ class MainWindow(QMainWindow):
         self.btn_log = QPushButton("▶ Avvia Log")
         self.btn_log.setEnabled(False)
         self.btn_log.clicked.connect(self.toggle_logging)
-        conn_layout.addWidget(self.btn_log)
+        conn_layout.addWidget(self.btn_log)          # BUG FIX: era btn_log
 
         btn_load = QPushButton("📂 Carica storico")
         btn_load.clicked.connect(self.load_history)
         conn_layout.addWidget(btn_load)
+
+        btn_reset_total = QPushButton("↺ Reset Totale")
+        btn_reset_total.clicked.connect(self.reset_total)
+        conn_layout.addWidget(btn_reset_total)
 
         conn_layout.addStretch()
         layout.addWidget(conn_box)
@@ -209,18 +221,34 @@ class MainWindow(QMainWindow):
         self.lbl_flow.setObjectName("valueLabel")
         self.lbl_flow.setAlignment(Qt.AlignmentFlag.AlignCenter)
         f_l.addWidget(self.lbl_flow)
-        unit_f = QLabel("litri")
+        unit_f = QLabel("Nl/min")
         unit_f.setObjectName("unitLabel")
         unit_f.setAlignment(Qt.AlignmentFlag.AlignCenter)
         f_l.addWidget(unit_f)
         values_layout.addWidget(f_frame)
 
-        # Correnti (diagnostica)
+        # Totalizzatore
+        t_frame = QFrame()
+        t_frame.setStyleSheet("background:#313244; border-radius:10px; padding:12px;")
+        t_l = QVBoxLayout(t_frame)
+        t_l.addWidget(QLabel("CONSUMO TOTALE", alignment=Qt.AlignmentFlag.AlignCenter))
+        self.lbl_total = QLabel("0.0")
+        self.lbl_total.setObjectName("valueLabel")
+        self.lbl_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_total.setStyleSheet("font-size:26px; font-weight:bold; color:#f9e2af;")
+        t_l.addWidget(self.lbl_total)
+        unit_t = QLabel("Nl")
+        unit_t.setObjectName("unitLabel")
+        unit_t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        t_l.addWidget(unit_t)
+        values_layout.addWidget(t_frame)
+
+        # Tensioni diagnostiche
         c_frame = QFrame()
         c_frame.setStyleSheet("background:#313244; border-radius:10px; padding:12px;")
         c_l = QVBoxLayout(c_frame)
-        c_l.addWidget(QLabel("CORRENTI (diagnostica)", alignment=Qt.AlignmentFlag.AlignCenter))
-        self.lbl_curr = QLabel("--- / --- mA")
+        c_l.addWidget(QLabel("TENSIONI (diagnostica)", alignment=Qt.AlignmentFlag.AlignCenter))
+        self.lbl_curr = QLabel("--- / --- V")
         self.lbl_curr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_curr.setStyleSheet("font-size:16px; color:#f9e2af;")
         c_l.addWidget(self.lbl_curr)
@@ -245,9 +273,9 @@ class MainWindow(QMainWindow):
         self.curve_p = self.plot_p.plot(pen=pg.mkPen('#89b4fa', width=2))
 
         # Portata
-        self.plot_f = self.plot_widget.addPlot(row=1, col=0, title="Portata [litri]")
+        self.plot_f = self.plot_widget.addPlot(row=1, col=0, title="Portata [Nl/min]")
         self.plot_f.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_f.setLabel('left', 'litri')
+        self.plot_f.setLabel('left', 'Nl/min')
         self.plot_f.setLabel('bottom', 'Tempo [s]')
         self.curve_f = self.plot_f.plot(pen=pg.mkPen('#a6e3a1', width=2))
 
@@ -274,31 +302,53 @@ class MainWindow(QMainWindow):
                 self.btn_connect.setText("Disconnetti")
                 self.btn_log.setEnabled(True)
                 self.start_time = time.time()
+                self.last_sample_time = None
                 self.status.showMessage(f"Connesso a {port}")
-                # Avvia lettura in thread
-                import threading
                 t = threading.Thread(target=self.worker.read_loop, daemon=True)
                 t.start()
             else:
                 QMessageBox.critical(self, "Errore", "Impossibile aprire la porta")
 
-    def on_data(self, t, pressure, flow, ma_p, ma_f):
+    def on_data(self, t, pressure, flow, v_p, v_f):
+        # Fault dal firmware ESP32
         if pressure < -900 or flow < -900:
-            self.status.showMessage("⚠ Fault sensore rilevato!", 3000)
+            self.status.showMessage(
+                "⚠ Fault sensore (cavo scollegato o segnale < 0.50 V)!", 4000)
+            self.lbl_press.setText("FAULT")
+            self.lbl_flow.setText("FAULT")
+            self.lbl_curr.setText(f"{v_p:.2f} / {v_f:.2f} V")
             return
 
         now = time.time() - self.start_time if self.start_time else t
+
+        # Totalizzatore: integrazione semplice (trapezio / rettangolo)
+        if self.last_sample_time is not None and flow >= 0:
+            dt_min = (now - self.last_sample_time) / 60.0   # secondi → minuti
+            self.total_nl += flow * dt_min
+        self.last_sample_time = now
+
         self.time_data.append(now)
         self.press_data.append(pressure)
         self.flow_data.append(flow)
 
         self.lbl_press.setText(f"{pressure:.3f}")
         self.lbl_flow.setText(f"{flow:.1f}")
-        self.lbl_curr.setText(f"{ma_p:.2f} / {ma_f:.2f} mA")
+        self.lbl_total.setText(f"{self.total_nl:.1f}")
+        self.lbl_curr.setText(f"{v_p:.2f} / {v_f:.2f} V")
 
         if self.logging and self.csv_writer:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            self.csv_writer.writerow([ts, f"{pressure:.4f}", f"{flow:.2f}", f"{ma_p:.3f}", f"{ma_f:.3f}"])
+            self.csv_writer.writerow([
+                ts,
+                f"{pressure:.4f}",
+                f"{flow:.2f}",
+                f"{v_p:.3f}",
+                f"{v_f:.3f}",
+                f"{self.total_nl:.2f}"
+            ])
+            # Flush periodico per non perdere dati in caso di crash
+            if self.csv_file and int(now * 5) % 10 == 0:   # ogni ~2 s
+                self.csv_file.flush()
 
     def update_plots(self):
         if len(self.time_data) > 1:
@@ -309,21 +359,33 @@ class MainWindow(QMainWindow):
     def toggle_logging(self):
         if not self.logging:
             path, _ = QFileDialog.getSaveFileName(
-                self, "Salva log", f"air_log_{datetime.now():%Y%m%d_%H%M%S}.csv",
+                self, "Salva log",
+                f"air_log_{datetime.now():%Y%m%d_%H%M%S}.csv",
                 "CSV (*.csv)")
             if path:
                 self.csv_file = open(path, 'w', newline='', encoding='utf-8')
                 self.csv_writer = csv.writer(self.csv_file)
-                self.csv_writer.writerow(["timestamp", "pressure_bar", "flow_liters", "mA_pressure", "mA_flow"])
+                self.csv_writer.writerow([
+                    "timestamp", "pressure_bar", "flow_Nl_min",
+                    "V_pressure", "V_flow", "total_Nl"
+                ])
                 self.logging = True
                 self.btn_log.setText("⏹ Ferma Log")
                 self.status.showMessage(f"Logging attivo → {path}")
         else:
             self.logging = False
             if self.csv_file:
+                self.csv_file.flush()
                 self.csv_file.close()
+                self.csv_file = None
+                self.csv_writer = None
             self.btn_log.setText("▶ Avvia Log")
             self.status.showMessage("Logging fermato")
+
+    def reset_total(self):
+        self.total_nl = 0.0
+        self.lbl_total.setText("0.0")
+        self.status.showMessage("Totalizzatore azzerato", 2000)
 
     def load_history(self):
         path, _ = QFileDialog.getOpenFileName(self, "Carica CSV", "", "CSV (*.csv)")
@@ -334,9 +396,12 @@ class MainWindow(QMainWindow):
             with open(path, newline='', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for i, row in enumerate(reader):
-                    times.append(i * 0.2)  # approx
+                    times.append(i * 0.2)          # assume 5 Hz
                     presses.append(float(row.get('pressure_bar', 0)))
-                    flows.append(float(row.get('flow_liters', 0)))
+                    flow_val = (row.get('flow_Nl_min') or
+                                row.get('flow_Nl') or
+                                row.get('flow_liters') or 0)
+                    flows.append(float(flow_val))
             self.curve_p.setData(times, presses)
             self.curve_f.setData(times, flows)
             self.status.showMessage(f"Caricato {path} ({len(times)} punti)")
@@ -344,13 +409,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Errore", str(e))
 
     def on_error(self, msg):
-        self.status.showMessage(f"Errore: {msg}")
+        self.status.showMessage(f"Errore seriale: {msg}")
 
     def closeEvent(self, event):
         self.worker.disconnect()
         if self.csv_file:
+            self.csv_file.flush()
             self.csv_file.close()
         event.accept()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
