@@ -1,0 +1,21 @@
+# --- PlatformIO (ESP32) ---
+.pio/
+.vsc_pgo_boring_file_name
+**/.*_cache/
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- VS Code workspace ---
+# Puoi decidere di salvare il file .code-workspace se vuoi condividere il layout con altri PC,
+# altrimenti decommenta la riga sotto per ignorarlo:
+# *.code-workspace
