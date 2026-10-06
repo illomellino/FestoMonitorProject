@@ -82,6 +82,7 @@ QStatusBar {
 class SerialWorker(QObject):
     data_received = pyqtSignal(float, float, float, float, float)  # t, P, F, V_p, V_f
     error = pyqtSignal(str)
+    status_msg = pyqtSignal(str)          # messaggi informativi (ready, ecc.)
 
     def __init__(self):
         super().__init__()
@@ -90,8 +91,40 @@ class SerialWorker(QObject):
 
     def connect(self, port, baud=115200):
         try:
-            self.ser = serial.Serial(port, baud, timeout=0.1)
+            # Apri la porta senza DTR/RTS automatici (alcuni driver li togglano da soli)
+            self.ser = serial.Serial()
+            self.ser.port = port
+            self.ser.baudrate = baud
+            self.ser.timeout = 0.1
+            self.ser.dtr = False          # evita reset automatico del driver
+            self.ser.rts = False
+            self.ser.open()
             self.running = True
+
+            # ---- Reset hardware ESP32 (sequenza più aggressiva) ----
+            # Funziona sulla maggior parte di DevKit / NodeMCU / CH340 / CP2102
+            try:
+                # Sequenza 1 (classica Arduino/ESP)
+                self.ser.setDTR(False)
+                self.ser.setRTS(True)
+                time.sleep(0.1)
+                self.ser.setDTR(True)
+                self.ser.setRTS(False)
+                time.sleep(0.1)
+
+                # Sequenza 2 (alternativa usata da esptool)
+                self.ser.setRTS(True)
+                self.ser.setDTR(True)
+                time.sleep(0.05)
+                self.ser.setDTR(False)
+                time.sleep(0.05)
+                self.ser.setRTS(False)
+                time.sleep(0.7)               # tempo boot + setup()
+
+                self.ser.reset_input_buffer()
+            except Exception:
+                pass
+
             return True
         except Exception as e:
             self.error.emit(str(e))
@@ -106,16 +139,35 @@ class SerialWorker(QObject):
         while self.running and self.ser and self.ser.is_open:
             try:
                 line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-                if not line or line.startswith("ESP32"):
+                if not line:
                     continue
+
+                # Messaggio di ready → lo mostriamo sulla status bar
+                if line.startswith("ESP32"):
+                    self.status_msg.emit(line)
+                    continue
+
+                # Errori testuali provenienti dall'ESP32 (es. "Errore: ADS1115 non trovata!")
+                lower = line.lower()
+                if ("errore" in lower or "error" in lower or
+                        "fault" in lower or "non trovata" in lower or
+                        "failed" in lower):
+                    self.error.emit(line)
+                    continue
+
+                # Dati CSV normali
                 parts = line.split(',')
                 if len(parts) >= 5:
-                    t = float(parts[0]) / 1000.0          # ms → s
-                    p = float(parts[1])
-                    f = float(parts[2])
-                    v_p = float(parts[3])
-                    v_f = float(parts[4])
-                    self.data_received.emit(t, p, f, v_p, v_f)
+                    try:
+                        t = float(parts[0]) / 1000.0          # ms → s
+                        p = float(parts[1])
+                        f = float(parts[2])
+                        v_p = float(parts[3])
+                        v_f = float(parts[4])
+                        self.data_received.emit(t, p, f, v_p, v_f)
+                    except ValueError:
+                        # Riga malformata → la segnaliamo
+                        self.error.emit(f"Riga non valida: {line}")
             except Exception as e:
                 self.error.emit(str(e))
                 time.sleep(0.05)
@@ -131,6 +183,7 @@ class MainWindow(QMainWindow):
         self.worker = SerialWorker()
         self.worker.data_received.connect(self.on_data)
         self.worker.error.connect(self.on_error)
+        self.worker.status_msg.connect(self._on_status_msg)
 
         # Buffer per grafici (~60 s a 5 Hz)
         self.buffer_size = 300
@@ -303,20 +356,54 @@ class MainWindow(QMainWindow):
                 self.btn_log.setEnabled(True)
                 self.start_time = time.time()
                 self.last_sample_time = None
-                self.status.showMessage(f"Connesso a {port}")
+                self._critical_shown = False
+                self._got_data_or_error = False
+                self.status.showMessage(f"Connesso a {port} – attendo ESP32…")
                 t = threading.Thread(target=self.worker.read_loop, daemon=True)
                 t.start()
+
+                # Watchdog: se dopo 4 secondi non arriva nulla → avvisa
+                QTimer.singleShot(4000, self._check_esp_alive)
             else:
                 QMessageBox.critical(self, "Errore", "Impossibile aprire la porta")
 
+    def _on_status_msg(self, msg):
+        self._got_data_or_error = True
+        self.status.showMessage(msg, 4000)
+
+    def _check_esp_alive(self):
+        """Chiamato 4 s dopo la connessione se non è arrivato ancora nulla."""
+        if not self.worker.running:
+            return
+        if getattr(self, "_got_data_or_error", False):
+            return
+        self.status.showMessage(
+            "⚠ Nessun dato dall'ESP32. Possibili cause: firmware vecchio, "
+            "ADS1115 assente, o reset DTR non supportato dal tuo adattatore USB.", 12000)
+        QMessageBox.warning(
+            self,
+            "Nessuna risposta dall'ESP32",
+            "Dopo 4 secondi non è arrivato nessun messaggio.\n\n"
+            "Cose da controllare:\n"
+            "1. Hai caricato il firmware AGGIORNATO (main.cpp nuovo)?\n"
+            "2. L'ADS1115 è collegata (SDA=21, SCL=22, 3.3V, GND)?\n"
+            "3. Prova a premere manualmente il tasto RESET sull'ESP32 "
+            "mentre la GUI è connessa."
+        )
+
     def on_data(self, t, pressure, flow, v_p, v_f):
-        # Fault dal firmware ESP32
+        self._got_data_or_error = True
+        # Fault numerici dal firmware ESP32 (-999 = cavo, -998 = overrange)
         if pressure < -900 or flow < -900:
-            self.status.showMessage(
-                "⚠ Fault sensore (cavo scollegato o segnale < 0.50 V)!", 4000)
-            self.lbl_press.setText("FAULT")
-            self.lbl_flow.setText("FAULT")
+            if pressure <= -999 or flow <= -999:
+                msg = "⚠ FAULT SENSORE: cavo scollegato o segnale < 0.50 V"
+            else:
+                msg = "⚠ OVERRANGE: segnale > 3.40 V"
+            self.status.showMessage(msg, 5000)
+            self.lbl_press.setText("FAULT" if pressure < -900 else f"{pressure:.3f}")
+            self.lbl_flow.setText("FAULT" if flow < -900 else f"{flow:.1f}")
             self.lbl_curr.setText(f"{v_p:.2f} / {v_f:.2f} V")
+            # Non aggiorniamo i grafici con valori di fault
             return
 
         now = time.time() - self.start_time if self.start_time else t
@@ -409,7 +496,21 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Errore", str(e))
 
     def on_error(self, msg):
-        self.status.showMessage(f"Errore seriale: {msg}")
+        self._got_data_or_error = True
+        # Mostra sempre sulla status bar
+        self.status.showMessage(f"⚠ {msg}", 8000)
+
+        # Errori hardware critici → popup (una sola volta per evitare spam)
+        critical_keywords = ("ads1115", "non trovata", "failed", "impossibile")
+        if any(k in msg.lower() for k in critical_keywords):
+            if not getattr(self, "_critical_shown", False):
+                self._critical_shown = True
+                QMessageBox.critical(
+                    self,
+                    "Errore hardware ESP32",
+                    f"L'ESP32 ha segnalato un errore critico:\n\n{msg}\n\n"
+                    "Controlla cablaggio I2C (SDA=21, SCL=22) e alimentazione ADS1115."
+                )
 
     def closeEvent(self, event):
         self.worker.disconnect()

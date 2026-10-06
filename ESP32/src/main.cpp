@@ -20,15 +20,17 @@ Adafruit_ADS1115 ads;
 // ------------------------------------------------------------------
 // Range fisici dei sensori (modifica in base ai datasheet)
 const float PRESSURE_MIN = 0.0;     // bar   @ 0.6 V
-const float PRESSURE_MAX = 10.0;    // bar   @ 3.3 V
+const float PRESSURE_MAX = 16.0;    // bar   @ 3.3 V
 const float FLOW_MIN     = 0.0;     // Nl/min @ 0.6 V
-const float FLOW_MAX     = 1000.0;  // Nl/min @ 3.3 V
+const float FLOW_MAX     = 3000.0;  // Nl/min @ 3.3 V
 
 // Soglie di validità del segnale elettrico
 const float V_MIN_VALID  = 0.50;    // sotto questa soglia → fault cavo
 const float V_MAX_VALID  = 3.40;    // sopra questa soglia → overrange
-const float V_SCALE_MIN  = 0.60;    // zero strumento
-const float V_SCALE_MAX  = 3.30;    // fondo scala strumento
+const float V_SCALE_MIN_F  = 0.595;    // zero strumento flusso
+const float V_SCALE_MAX_F  = 2.97;    // fondo scala strumento flusso
+const float V_SCALE_MIN_P  = 0.579;    // zero strumento pressione
+const float V_SCALE_MAX_P  = 2.905;    // fondo scala strumento pressione
 
 // Fattore di conversione ADS1115 @ GAIN_ONE (±4.096 V)
 // 1 LSB = 0.125 mV = 0.000125 V
@@ -45,8 +47,12 @@ void setup() {
   ads.setGain(GAIN_ONE);
 
   if (!ads.begin(0x48)) {               // indirizzo standard ADS1115
-    Serial.println("Errore: ADS1115 non trovata!");
-    while (true) delay(1000);
+    // Stampa l'errore periodicamente così viene sempre intercettato
+    // anche se la GUI si connette dopo l'avvio (o se il reset DTR fallisce)
+    while (true) {
+      Serial.println("Errore: ADS1115 non trovata!");
+      delay(2000);
+    }
   }
 
   delay(500);
@@ -57,12 +63,12 @@ void setup() {
  * Mappa tensione → valore fisico con gestione fault.
  * Ritorna -999.0 (sottorange) o -998.0 (overrange) se fuori limiti.
  */
-float mapVoltage(float voltage, float minVal, float maxVal) {
+float mapVoltage(float voltage,float v_scale_min, float v_scale_max, float minVal, float maxVal) {
   if (voltage < V_MIN_VALID) return -999.0f;   // cavo / sensore scollegato
   if (voltage > V_MAX_VALID) return -998.0f;   // overrange
 
   // Mappatura lineare 0.6 V … 3.3 V → minVal … maxVal
-  float ratio = (voltage - V_SCALE_MIN) / (V_SCALE_MAX - V_SCALE_MIN);
+  float ratio = (voltage - v_scale_min) / (v_scale_max - v_scale_min);
   // Clamp per sicurezza (eventuali piccole variazioni di calibrazione)
   if (ratio < 0.0f) ratio = 0.0f;
   if (ratio > 1.0f) ratio = 1.0f;
@@ -81,8 +87,8 @@ void loop() {
   float voltF = (sum1 / 4.0f) * ADS_LSB;
 
   // Conversione in grandezze fisiche
-  float pressure = mapVoltage(voltP, PRESSURE_MIN, PRESSURE_MAX);
-  float flow     = mapVoltage(voltF, FLOW_MIN, FLOW_MAX);
+  float pressure = mapVoltage(voltP,V_SCALE_MIN_P, V_SCALE_MAX_P, PRESSURE_MIN, PRESSURE_MAX);
+  float flow     = mapVoltage(voltF,V_SCALE_MIN_F, V_SCALE_MAX_F, FLOW_MIN, FLOW_MAX);
 
   // Trasmissione CSV
   // %.3f pressione, %.2f portata, %.3f tensioni (più precise)
@@ -93,5 +99,5 @@ void loop() {
                 voltP,
                 voltF);
 
-  delay(200);   // 5 Hz
+  delay(100);   // 10 Hz
 }

@@ -3,3 +3,7 @@ per creare/aggiornare l'exe devi digitare queto comando:
 pyinstaller --onefile --windowed FestoMonitor_gui.py
 
 dall'interno della cartella "PC"
+
+
+
+pip install -r requirements.txt
