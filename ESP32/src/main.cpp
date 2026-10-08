@@ -29,8 +29,14 @@ const float V_MIN_VALID  = 0.50;    // sotto questa soglia → fault cavo
 const float V_MAX_VALID  = 3.40;    // sopra questa soglia → overrange
 const float V_SCALE_MIN_F  = 0.595;    // zero strumento flusso
 const float V_SCALE_MAX_F  = 2.97;    // fondo scala strumento flusso
-const float V_SCALE_MIN_P  = 0.579;    // zero strumento pressione
+const float V_SCALE_MIN_P  = 0.578;    // zero strumento pressione
 const float V_SCALE_MAX_P  = 2.905;    // fondo scala strumento pressione
+const unsigned long SEND_INTERVAL = 100;   // 10 Hz
+
+unsigned long lastSendTime = 0;
+int32_t sum0 = 0;
+int32_t sum1 = 0;
+uint32_t sampleCount = 0;
 
 // Fattore di conversione ADS1115 @ GAIN_ONE (±4.096 V)
 // 1 LSB = 0.125 mV = 0.000125 V
@@ -77,27 +83,36 @@ float mapVoltage(float voltage,float v_scale_min, float v_scale_max, float minVa
 }
 
 void loop() {
-  // Lettura ADC (media di 4 campioni per ridurre rumore)
-  int32_t sum0 = 0, sum1 = 0;
-  for (int i = 0; i < 4; i++) {
-    sum0 += ads.readADC_SingleEnded(0);   // A0 = Pressione
-    sum1 += ads.readADC_SingleEnded(1);   // A1 = Portata
+  // --- Campionamento continuo ---
+  sum0 += ads.readADC_SingleEnded(0);   // A0 = Pressione
+  sum1 += ads.readADC_SingleEnded(1);   // A1 = Portata
+  sampleCount++;
+
+  // --- Controllo se è ora di trasmettere ---
+  unsigned long now = millis();
+  if (now - lastSendTime >= SEND_INTERVAL) {
+    
+    // Protezione (nel caso sampleCount sia 0, anche se non dovrebbe succedere)
+    if (sampleCount > 0) {
+      float voltP = (sum0 / (float)sampleCount) * ADS_LSB;
+      float voltF = (sum1 / (float)sampleCount) * ADS_LSB;
+
+      float pressure = mapVoltage(voltP, V_SCALE_MIN_P, V_SCALE_MAX_P, PRESSURE_MIN, PRESSURE_MAX);
+      float flow     = mapVoltage(voltF, V_SCALE_MIN_F, V_SCALE_MAX_F, FLOW_MIN, FLOW_MAX);
+
+      // Trasmissione CSV
+      Serial.printf("%lu,%.3f,%.2f,%.3f,%.3f\n",
+                    now,
+                    pressure,
+                    flow,
+                    voltP,
+                    voltF);
+    }
+
+    // Reset per il prossimo intervallo
+    sum0 = 0;
+    sum1 = 0;
+    sampleCount = 0;
+    lastSendTime += SEND_INTERVAL;
   }
-  float voltP = (sum0 / 4.0f) * ADS_LSB;
-  float voltF = (sum1 / 4.0f) * ADS_LSB;
-
-  // Conversione in grandezze fisiche
-  float pressure = mapVoltage(voltP,V_SCALE_MIN_P, V_SCALE_MAX_P, PRESSURE_MIN, PRESSURE_MAX);
-  float flow     = mapVoltage(voltF,V_SCALE_MIN_F, V_SCALE_MAX_F, FLOW_MIN, FLOW_MAX);
-
-  // Trasmissione CSV
-  // %.3f pressione, %.2f portata, %.3f tensioni (più precise)
-  Serial.printf("%lu,%.3f,%.2f,%.3f,%.3f\n",
-                millis(),
-                pressure,
-                flow,
-                voltP,
-                voltF);
-
-  delay(100);   // 10 Hz
 }
