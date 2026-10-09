@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------
-# Stile Grafico Moderno (Dark Theme ingegneristico)
+# Stile dark theme
 # ----------------------------------------------------------------------
 DARK_STYLE = """
 QMainWindow, QWidget {
@@ -8,44 +8,48 @@ QMainWindow, QWidget {
     font-family: 'Segoe UI', -apple-system, Arial, sans-serif;
 }
 QGroupBox {
-    border: 1px solid #313244;
-    border-radius: 10px;
-    margin-top: 14px;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    margin-top: 10px;
     font-weight: bold;
-    font-size: 13px;
-    background-color: #181825;
+    color: #cdd6f4;
+    background-color: #11111b;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 14px;
-    padding: 0 6px;
+    subcontrol-position: top left;
+    padding: 0 5px;
     color: #89b4fa;
 }
 QPushButton {
-    background-color: #89b4fa;
-    color: #1e1e2e;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-weight: bold;
-}
-QPushButton:hover { background-color: #b4befe; }
-QPushButton:pressed { background-color: #74c7ec; }
-QPushButton:disabled { background-color: #313244; color: #6c7086; }
-QPushButton#measureBtn {
-    background-color: #f9e2af;
-    color: #1e1e2e;
-}
-QPushButton#measureBtn:checked {
-    background-color: #fab387;
-}
-QComboBox, QSpinBox, QDoubleSpinBox {
     background-color: #313244;
+    color: #cdd6f4;
     border: 1px solid #45475a;
     border-radius: 6px;
-    padding: 6px;
-    min-width: 110px;
+    padding: 6px 12px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #45475a;
+    border-color: #89b4fa;
+}
+QPushButton:pressed {
+    background-color: #585b70;
+}
+QPushButton:checked {
+    background-color: #45475a;
+    border-color: #89b4fa;
+}
+QPushButton:disabled {
+    background-color: #1e1e2e;
+    color: #6c7086;
+}
+QComboBox, QSpinBox, QDoubleSpinBox {
+    background-color: #181825;
     color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 4px;
 }
 QStatusBar {
     background-color: #11111b;
@@ -54,13 +58,13 @@ QStatusBar {
 }
 QTabWidget::pane {
     border: 1px solid #313244;
-    background: #181825;
+    background: #11111b;
     border-radius: 8px;
 }
 QTabBar::tab {
-    background: #11111b;
+    background: #181825;
     color: #a6adc8;
-    padding: 8px 18px;
+    padding: 8px 16px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
     margin-right: 2px;
@@ -69,6 +73,7 @@ QTabBar::tab:selected {
     background: #313244;
     color: #89b4fa;
     font-weight: bold;
+    border-bottom: 2px solid #89b4fa;
 }
 QTableWidget {
     background-color: #181825;
