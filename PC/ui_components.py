@@ -251,14 +251,31 @@ class MainWindow(QMainWindow):
     # Dati: monitor sempre, grafico solo se logging
     # ------------------------------------------------------------------
     def on_data(self, t, pressure, flow, v_p, v_f):
-        # Valori live sempre
-        self.lbl_press.setText(f"{pressure:.3f} bar")
-        self.lbl_flow.setText(f"{flow:.2f} Nl/min")
+        # Tensioni diagnostiche sempre aggiornate
         if self.lbl_vp:
             self.lbl_vp.setText(f"{v_p:.3f} V")
         if self.lbl_vf:
             self.lbl_vf.setText(f"{v_f:.3f} V")
 
+        # Fault numerici dal firmware ESP32:
+        #   -999 = cavo scollegato / segnale < 0.50 V
+        #   -998 = overrange / segnale > 3.40 V
+        fault_p = pressure < -900
+        fault_f = flow < -900
+        if fault_p or fault_f:
+            if (pressure <= -999) or (flow <= -999):
+                msg = "⚠ FAULT SENSORE: cavo scollegato o segnale < 0.50 V"
+            else:
+                msg = "⚠ OVERRANGE: segnale > 3.40 V"
+            self.status.showMessage(msg, 5000)
+            self.lbl_press.setText("FAULT" if fault_p else f"{pressure:.3f} bar")
+            self.lbl_flow.setText("FAULT" if fault_f else f"{flow:.2f} Nl/min")
+            # Non registrare / non aggiornare grafico con valori di fault
+            return
+
+        # Valori live sempre (anche senza log)
+        self.lbl_press.setText(f"{pressure:.3f} bar")
+        self.lbl_flow.setText(f"{flow:.2f} Nl/min")
         if not self.logging:
             return
 

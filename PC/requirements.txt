@@ -1,5 +1,10 @@
+# Runtime
 pyserial>=3.5
 PyQt6>=6.6
 pyqtgraph>=0.13
 numpy>=1.24
+reportlab>=4.0
+pillow>=10.0
+
+# Build (solo per creare l'exe)
 pyinstaller>=6.0

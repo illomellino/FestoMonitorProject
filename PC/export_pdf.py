@@ -2,6 +2,9 @@ from datetime import datetime
 import numpy as np
 from PyQt6.QtWidgets import QMessageBox, QFileDialog
 
+REPORTLAB_AVAILABLE = False
+REPORTLAB_IMPORT_ERROR = None
+
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
@@ -9,8 +12,9 @@ try:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.units import mm
     REPORTLAB_AVAILABLE = True
-except ImportError:
-    REPORTLAB_AVAILABLE = False
+except ImportError as exc:
+    # Conserva il motivo reale: utile quando l'EXE viene eseguito su un altro PC.
+    REPORTLAB_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 
 def _fmt_ts(ts):
@@ -27,9 +31,14 @@ def generate_pdf_report(parent_widget, press_data, time_data, flow_data,
     Se cursor_range=(t_lo, t_hi) è fornito, filtra solo quell'intervallo.
     """
     if not REPORTLAB_AVAILABLE:
+        dettaglio = REPORTLAB_IMPORT_ERROR or "Errore di importazione non disponibile."
         QMessageBox.warning(
-            parent_widget, "Manca reportlab",
-            "Installa con:\npip install reportlab"
+            parent_widget,
+            "Errore caricamento ReportLab",
+            "Impossibile caricare ReportLab nell'applicazione.\n\n"
+            f"Dettaglio tecnico: {dettaglio}\n\n"
+            "Se il problema si verifica nell'EXE, ricompila l'app e controlla "
+            "il messaggio tecnico."
         )
         return
     if len(press_data) < 5:
