@@ -1,31 +1,4 @@
 # ----------------------------------------------------------------------
-# Costanti di riferimento per la normalizzazione
-# ----------------------------------------------------------------------
-REF_CONDITIONS = {
-    "l/min (grezzi)": None,
-    "Nl/min – DIN 1343": {
-        "Pn": 1.01325,  # bar
-        "Tn": 273.15,   # K (0°C)
-        "unit": "Nl/min",
-        "name": "DIN 1343"
-    },
-    "Nl/min – ISO 6358/8778": {
-        "Pn": 1.0,      # bar
-        "Tn": 293.15,   # K (20°C)
-        "unit": "Nl/min",
-        "name": "ISO 6358/8778"
-    },
-    "SCFM – ANSI": {
-        "Pn": 1.01325,  # bar
-        "Tn": 288.706,  # K (15.56°C)
-        "unit": "SCFM",
-        "name": "ANSI"
-    },
-}
-
-NL_TO_SCFM = 0.0353146667
-
-# ----------------------------------------------------------------------
 # Stile Grafico Moderno (Dark Theme ingegneristico)
 # ----------------------------------------------------------------------
 DARK_STYLE = """
