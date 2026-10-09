@@ -21,25 +21,42 @@ def load_app_icon() -> QIcon:
         resource_path("icon.ico"),
         resource_path("app.ico"),
         resource_path("FestoMonitor.ico"),
-        # sviluppo: icona nella cartella PC
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"),
     ]
     for path in candidates:
         if os.path.isfile(path):
             return QIcon(path)
-    return QIcon()  # vuota se assente
+    return QIcon()
+
+
+def close_native_splash():
+    """Chiude lo splash screen nativo di PyInstaller non appena l'app è pronta."""
+    try:
+        import pyi_splash
+        if pyi_splash.is_alive():
+            pyi_splash.close()
+    except ImportError:
+        pass  # In ambiente di sviluppo (es. VSCode) pyi_splash non esiste e viene ignorato
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
+    # 1. Caricamento icone
     icon = load_app_icon()
     if not icon.isNull():
         app.setWindowIcon(icon)
 
+    # 2. Inizializzazione della finestra principale
     window = MainWindow()
     if not icon.isNull():
         window.setWindowIcon(icon)
+
+    # 3. Mostra la finestra principale
     window.show()
+
+    # 4. Chiude lo splash screen nativo nell'esatto momento in cui la finestra appare
+    close_native_splash()
+
     sys.exit(app.exec())
